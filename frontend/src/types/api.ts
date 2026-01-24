@@ -1,5 +1,21 @@
 // API 类型定义
 
+export interface QuotaStatus {
+  available: boolean
+  remaining_seconds?: number
+}
+
+export interface AccountQuotaStatus {
+  quotas: {
+    text: QuotaStatus
+    images: QuotaStatus
+    videos: QuotaStatus
+  }
+  limited_count: number
+  total_count: number
+  is_expired: boolean
+}
+
 export interface AdminAccount {
   id: string
   status: string
@@ -12,6 +28,7 @@ export interface AdminAccount {
   cooldown_seconds: number
   cooldown_reason: string | null
   conversation_count: number
+  quota_status: AccountQuotaStatus
 }
 
 export interface AccountsListResponse {

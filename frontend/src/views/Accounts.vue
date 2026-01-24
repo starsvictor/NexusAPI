@@ -320,6 +320,7 @@
                   <HelpTip text="过期时间为 12 小时，账户过期以北京时间为准。" />
                 </span>
               </th>
+              <th class="py-3 pr-6">配额</th>
               <th class="py-3 pr-6">冷却</th>
               <th class="py-3 pr-6">失败数</th>
               <th class="py-3 pr-6">会话数</th>
@@ -328,7 +329,7 @@
           </thead>
           <tbody class="text-sm text-foreground">
             <tr v-if="!filteredAccounts.length && !isLoading">
-              <td colspan="8" class="py-8 text-center text-muted-foreground">
+              <td colspan="9" class="py-8 text-center text-muted-foreground">
                 暂无账号数据，请检查后台配置。
               </td>
             </tr>
@@ -363,6 +364,10 @@
                 <span v-if="account.expires_at" class="block text-[11px] text-muted-foreground">
                   {{ account.expires_at }}
                 </span>
+              </td>
+              <td class="py-4 pr-6">
+                <QuotaBadge v-if="account.quota_status" :quota-status="account.quota_status" />
+                <span v-else class="text-xs text-muted-foreground">-</span>
               </td>
               <td class="py-4 pr-6 text-xs">
                 <span v-if="account.cooldown_seconds > 0" :class="cooldownClass(account)">
@@ -833,6 +838,7 @@ import { useAccountsStore } from '@/stores'
 import SelectMenu from '@/components/ui/SelectMenu.vue'
 import Checkbox from '@/components/ui/Checkbox.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import QuotaBadge from '@/components/QuotaBadge.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useToast } from '@/composables/useToast'
 import HelpTip from '@/components/ui/HelpTip.vue'

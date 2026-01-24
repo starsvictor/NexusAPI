@@ -79,6 +79,12 @@ from core.config import config_manager, config
 # 数据库存储支持
 from core import storage
 
+# 模型到配额类型的映射
+MODEL_TO_QUOTA_TYPE = {
+    "gemini-imagen": "images",
+    "gemini-veo": "videos"
+}
+
 # ---------- 日志配置 ----------
 
 # 内存日志缓冲区 (保留最近 1000 条日志，重启后清空)
@@ -1085,6 +1091,7 @@ async def admin_get_accounts(request: Request):
         remaining_hours = config.get_remaining_hours()
         status, status_color, remaining_display = format_account_expiration(remaining_hours)
         cooldown_seconds, cooldown_reason = account_manager.get_cooldown_info()
+        quota_status = account_manager.get_quota_status()
 
         accounts_info.append({
             "id": config.account_id,
@@ -1098,7 +1105,8 @@ async def admin_get_accounts(request: Request):
             "cooldown_seconds": cooldown_seconds,
             "cooldown_reason": cooldown_reason,
             "conversation_count": account_manager.conversation_count,
-            "session_usage_count": account_manager.session_usage_count
+            "session_usage_count": account_manager.session_usage_count,
+            "quota_status": quota_status  # 新增配额状态
         })
 
     return {"total": len(accounts_info), "accounts": accounts_info}
@@ -1915,9 +1923,13 @@ async def chat_impl(
                 # 记录账号池状态（请求失败）
                 uptime_tracker.record_request("account_pool", False, status_code=status_code)
 
+                # 判断请求类型以传递quota_type（使用字典映射）
+                quota_type = MODEL_TO_QUOTA_TYPE.get(req.model)
+                # 普通对话模型返回None（text配额是基础配额，所有请求都需要）
+
                 # 使用统一的错误处理入口
                 if is_http_exception:
-                    account_manager.handle_http_error(status_code, str(e.detail) if hasattr(e, 'detail') else "", request_id)
+                    account_manager.handle_http_error(status_code, str(e.detail) if hasattr(e, 'detail') else "", request_id, quota_type)
                 else:
                     account_manager.handle_non_http_error("聊天请求", request_id)
 
