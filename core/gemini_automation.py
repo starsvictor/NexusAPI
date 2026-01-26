@@ -261,18 +261,9 @@ class GeminiAutomation:
             code_input.input(code, clear=True)
             time.sleep(0.5)
 
-        verify_btn = page.ele("css:button[jsname='XooR8e']", timeout=3)
-        if verify_btn:
-            self._log("info", "🖱️ 点击验证按钮 (方法1)")
-            verify_btn.click()
-        else:
-            verify_btn = self._find_verify_button(page)
-            if verify_btn:
-                self._log("info", "🖱️ 点击验证按钮 (方法2)")
-                verify_btn.click()
-            else:
-                self._log("info", "⏎ 按下回车键提交")
-                code_input.input("\n")
+        # 直接使用回车提交，不再查找按钮
+        self._log("info", "⏎ 按下回车键提交验证码")
+        code_input.input("\n")
 
         # Step 7: 等待页面自动重定向（提交验证码后 Google 会自动跳转）
         self._log("info", "⏳ 等待验证后自动跳转...")

@@ -91,13 +91,13 @@ class RegisterService(BaseTaskService[RegisterTask]):
         loop = asyncio.get_running_loop()
         self._append_log(task, "info", f"🚀 注册任务已启动 (共 {task.count} 个账号)")
 
-        for _ in range(task.count):
+        for idx in range(task.count):
             if task.cancel_requested:
                 self._append_log(task, "warning", f"register task cancelled: {task.cancel_reason or 'cancelled'}")
                 task.status = TaskStatus.CANCELLED
                 task.finished_at = time.time()
                 return
-        for idx in range(task.count):
+
             try:
                 self._append_log(task, "info", f"📊 进度: {idx + 1}/{task.count}")
                 result = await loop.run_in_executor(self._executor, self._register_one, domain, task)
@@ -124,12 +124,6 @@ class RegisterService(BaseTaskService[RegisterTask]):
         else:
             task.status = TaskStatus.SUCCESS if task.fail_count == 0 else TaskStatus.FAILED
         task.finished_at = time.time()
-        self._append_log(task, "info", f"register task finished ({task.success_count}/{task.count})")
-
-    def _register_one(self, domain: Optional[str], task: RegisterTask) -> dict:
-        """注册单个账户"""
-        def log_cb(level, message):
-            self._append_log(task, level, message)
         self._current_task_id = None
         self._append_log(task, "info", f"🏁 注册任务完成 (成功: {task.success_count}, 失败: {task.fail_count}, 总计: {task.count})")
 
