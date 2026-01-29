@@ -224,6 +224,30 @@ Configure a PostgreSQL database to persist accounts, settings, and statistics ac
    postgresql://user:password@ep-xxx.neon.tech/dbname?sslmode=require
 ```
 
+#### Database Migration (First-time Setup or Upgrade)
+
+If you have old local files (accounts.json/settings.yaml/stats.json), run the migration script:
+
+```bash
+# Run migration script directly
+python scripts/migrate_to_database.py
+
+# Zeabur environment: Click service → Command → Enter the following
+python scripts/migrate_to_database.py
+```
+
+**Migration script auto-detects**:
+- ✅ `DATABASE_URL` configured → Migrate to PostgreSQL (remote database)
+- ✅ `DATABASE_URL` not configured → Migrate to SQLite (local data.db)
+
+**Migration content**:
+- ✅ Migrate from kv_store (old table structure) to new tables (PostgreSQL only)
+- ✅ Migrate from local files (accounts.json/settings.yaml/stats.json) to database
+- ✅ Auto-rename local files after migration (prevent duplicates)
+- ✅ Preserve kv_store as backup (PostgreSQL only)
+
+> **Note**: SQLite and PostgreSQL table structures are fully compatible, future migration from SQLite → PostgreSQL is possible
+
 ### Access
 
 - Admin Panel: `http://localhost:7860/` (Login with `ADMIN_KEY`)

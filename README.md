@@ -65,6 +65,30 @@
 - `gemini-imagen`：专用图片生成模型，强制启用图片生成功能
 - `gemini-veo`：专用视频生成模型，强制启用视频生成功能
 
+#### 数据库迁移（首次使用或升级）
+
+如果你有旧的本地文件（accounts.json/settings.yaml/stats.json），需要运行迁移脚本：
+
+```bash
+# 直接运行迁移脚本
+python scripts/migrate_to_database.py
+
+# Zeabur 环境：点击服务 → 指令 → 输入以下命令
+python scripts/migrate_to_database.py
+```
+
+**迁移脚本会自动检测**：
+- ✅ 配置了 `DATABASE_URL` → 迁移到 PostgreSQL（远程数据库）
+- ✅ 未配置 `DATABASE_URL` → 迁移到 SQLite（本地 data.db）
+
+**迁移内容**：
+- ✅ 从 kv_store（旧表结构）迁移到新表（仅 PostgreSQL）
+- ✅ 从本地文件（accounts.json/settings.yaml/stats.json）迁移到数据库
+- ✅ 迁移后自动重命名本地文件（防止重复）
+- ✅ 保留 kv_store 作为备份（仅 PostgreSQL）
+
+> **注意**：SQLite 和 PostgreSQL 表结构完全兼容，以后可以从 SQLite 迁移到 PostgreSQL
+
 ## 🚀 快速开始
 
 ### 方式一：Zeabur 部署（推荐，支持自动更新）
