@@ -1375,7 +1375,7 @@ async def admin_disable_account(request: Request, account_id: str):
         # 立即保存当前状态到数据库，防止后台任务覆盖
         if account_id in multi_account_mgr.accounts:
             account_mgr = multi_account_mgr.accounts[account_id]
-            await account.save_account_cooldown_state(account_mgr, account_id)
+            await account.save_account_cooldown_state(account_id, account_mgr)
 
         return {"status": "success", "message": f"账户 {account_id} 已禁用", "account_count": len(multi_account_mgr.accounts)}
     except Exception as e:
@@ -1396,12 +1396,10 @@ async def admin_enable_account(request: Request, account_id: str):
         if account_id in multi_account_mgr.accounts:
             account_mgr = multi_account_mgr.accounts[account_id]
             account_mgr.quota_cooldowns = {}
-            account_mgr.generic_cooldown_until = 0.0
-            account_mgr.permanently_disabled = False
             logger.info(f"[CONFIG] 账户 {account_id} 冷却状态已重置")
 
             # 立即保存清空的冷却状态到数据库，防止后台任务覆盖
-            await account.save_account_cooldown_state(account_mgr, account_id)
+            await account.save_account_cooldown_state(account_id, account_mgr)
 
         return {"status": "success", "message": f"账户 {account_id} 已启用", "account_count": len(multi_account_mgr.accounts)}
     except Exception as e:

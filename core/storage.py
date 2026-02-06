@@ -598,8 +598,6 @@ async def update_account_disabled(account_id: str, disabled: bool) -> bool:
 def _apply_cooldown_data(data: dict, cooldown_data: dict) -> None:
     """应用冷却数据到账户数据（消除重复代码）"""
     data["quota_cooldowns"] = cooldown_data.get("quota_cooldowns", {})
-    data["generic_cooldown_until"] = cooldown_data.get("generic_cooldown_until", 0.0)
-    data["permanently_disabled"] = cooldown_data.get("permanently_disabled", False)
     data["conversation_count"] = cooldown_data.get("conversation_count", 0)
     data["failure_count"] = cooldown_data.get("failure_count", 0)
 

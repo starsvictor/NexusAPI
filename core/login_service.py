@@ -310,8 +310,6 @@ class LoginService(BaseTaskService[LoginTask]):
         if account_id in self.multi_account_mgr.accounts:
             account_mgr = self.multi_account_mgr.accounts[account_id]
             account_mgr.quota_cooldowns.clear()  # 清除配额冷却
-            account_mgr.generic_cooldown_until = 0.0  # 清除通用冷却
-            account_mgr.permanently_disabled = False  # 清除永久禁用
             account_mgr.is_available = True  # 恢复可用状态
             log_cb("info", "✅ 已清除账户冷却状态")
 
