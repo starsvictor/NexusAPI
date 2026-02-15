@@ -1,7 +1,7 @@
 services:
   gemini-api:
-    image: cooooookk/gemini-business2api:latest
-    container_name: gemini-business2api
+    image: lethex/nexusapi:latest
+    container_name: nexusapi
     ports:
       - "7860:7860"
     volumes:

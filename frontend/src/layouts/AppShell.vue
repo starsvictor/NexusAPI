@@ -20,7 +20,7 @@
         >
           <div class="flex items-center gap-2" :class="isSidebarCollapsed ? 'gap-0 justify-center w-full' : ''">
             <a
-              href="https://github.com/Dreamy-rain/gemini-business2api"
+              href="https://github.com/starsvictor/NexusAPI"
               target="_blank"
               rel="noopener noreferrer"
               class="text-foreground transition-colors hover:text-primary"
@@ -35,7 +35,7 @@
                 <path d="M12 2C6.477 2 2 6.477 2 12c0 4.419 2.865 8.166 6.839 9.489.5.09.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.004.071 1.532 1.031 1.532 1.031.892 1.529 2.341 1.087 2.91.832.091-.647.349-1.087.636-1.337-2.22-.253-4.555-1.11-4.555-4.944 0-1.092.39-1.987 1.029-2.687-.103-.253-.446-1.272.098-2.65 0 0 .84-.269 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.026 2.748-1.026.546 1.378.202 2.397.1 2.65.64.7 1.028 1.595 1.028 2.687 0 3.842-2.338 4.687-4.566 4.936.359.309.678.919.678 1.852 0 1.337-.012 2.418-.012 2.747 0 .268.18.577.688.479A10.002 10.002 0 0 0 22 12c0-5.523-4.477-10-10-10z" />
               </svg>
             </a>
-            <span v-if="!isSidebarCollapsed" class="text-base font-semibold text-foreground">Gemini Business2API</span>
+            <span v-if="!isSidebarCollapsed" class="text-base font-semibold text-foreground">NexusAPI</span>
           </div>
         </div>
 
@@ -78,12 +78,12 @@
           <div v-if="!isSidebarCollapsed" class="rounded-2xl bg-secondary/60 p-3">
             <p class="text-xs tracking-[0.12em] text-muted-foreground">
               <a
-                href="https://github.com/Dreamy-rain/gemini-business2api"
+                href="https://github.com/starsvictor/NexusAPI"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="inline-flex items-center gap-1 transition-colors hover:text-foreground"
               >
-                gemini-business2api
+                NexusAPI
               </a>
               <span> · 声明</span>
             </p>
@@ -351,6 +351,11 @@ const menuItems = [
     icon: 'M12 12a3.5 3.5 0 1 0-3.5-3.5A3.5 3.5 0 0 0 12 12zm0 2c-4.1 0-7.5 2.2-7.5 5v1h15v-1c0-2.8-3.4-5-7.5-5z',
   },
   {
+    path: '/dreamina',
+    label: 'Dreamina',
+    icon: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5l5-5 5 5m-5-5v12',
+  },
+  {
     path: '/settings',
     label: '系统设置',
     icon: 'M4 6h10v2H4V6zm12 0h4v2h-4V6zM4 11h6v2H4v-2zm8 0h8v2h-8v-2zM4 16h10v2H4v-2zm12 0h4v2h-4v-2z',
@@ -412,6 +417,15 @@ const supportedModels = [
   'gemini-3-pro-preview',
   'gemini-imagen',
   'gemini-veo',
+  'dreamina-4.5',
+  'dreamina-4.1',
+  'dreamina-4.0',
+  'dreamina-3.1',
+  'dreamina-3.0',
+  'dreamina-2.1',
+  'dreamina-2.0-pro',
+  'dreamina-2.0',
+  'nano-banana',
 ]
 
 watch(

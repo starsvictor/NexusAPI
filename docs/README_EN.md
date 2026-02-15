@@ -1,7 +1,7 @@
 ﻿<p align="center">
-  <img src="../docs/logo.svg" width="120" alt="Gemini Business2API logo" />
+  <img src="../docs/logo.svg" width="120" alt="NexusAPI logo" />
 </p>
-<h1 align="center">Gemini Business2API</h1>
+<h1 align="center">NexusAPI</h1>
 <p align="center">Empowering AI with seamless integration</p>
 <p align="center">
   <a href="../README.md">简体中文</a> | <strong>English</strong>
@@ -46,7 +46,7 @@
 - ✅ Logging & monitoring - Real-time status and statistics
 - ✅ Proxy support - Configure in the admin settings
 - ✅ Built-in admin panel - Online configuration and account management
-- ✅ Optional PostgreSQL backend — persists accounts/settings/stats [thanks PR](https://github.com/Dreamy-rain/gemini-business2api/pull/4)
+- ✅ Optional PostgreSQL backend — persists accounts/settings/stats [thanks PR](https://github.com/starsvictor/NexusAPI/pull/4)
 
 ## 🤖 Model Capabilities
 
@@ -68,7 +68,7 @@
 
 ### Method 1: Zeabur Deployment (Recommended, Auto-Update Supported)
 
-Thanks to [PR #37](https://github.com/Dreamy-rain/gemini-business2api/pull/37) for Linux and Docker deployment optimizations.
+Thanks to [PR #37](https://github.com/starsvictor/NexusAPI/pull/37) for Linux and Docker deployment optimizations.
 
 #### Step 1: Fork the Repository
 
@@ -104,8 +104,8 @@ When this project is updated:
 
 **Linux/macOS:**
 ```bash
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 bash setup.sh
 
 cp .env.example .env
@@ -123,8 +123,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 **Windows:**
 ```cmd
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 setup.bat
 
 copy .env.example .env
@@ -154,8 +154,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ### Method 3: Manual Deployment
 
 ```bash
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 
 # Build frontend
 cd frontend
@@ -186,8 +186,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 
 # 2. Configure environment variables
 cp .env.example .env
@@ -203,7 +203,7 @@ docker-compose logs -f
 docker-compose pull && docker-compose up -d
 ```
 
-Thanks to [PR #9](https://github.com/Dreamy-rain/gemini-business2api/pull/9) for optimizing the Dockerfile build
+Thanks to [PR #9](https://github.com/starsvictor/NexusAPI/pull/9) for optimizing the Dockerfile build
 
 
 ### Database Persistence (Recommended)
@@ -296,7 +296,7 @@ python scripts/migrate_to_database.py
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Dreamy-rain/gemini-business2api&type=date&legend=top-left)](https://www.star-history.com/#Dreamy-rain/gemini-business2api&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=starsvictor/NexusAPI&type=date&legend=top-left)](https://www.star-history.com/#starsvictor/NexusAPI&type=date&legend=top-left)
 
 **If this project helps you, please give it a ⭐ Star!**
 

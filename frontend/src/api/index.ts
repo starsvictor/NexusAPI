@@ -1,6 +1,7 @@
 // 统一导出所有 API
 export { authApi } from './auth'
 export { accountsApi } from './accounts'
+export { dreaminaApi } from './dreamina'
 export { settingsApi } from './settings'
 export { logsApi } from './logs'
 export { monitorApi } from './monitor'

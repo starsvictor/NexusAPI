@@ -38,6 +38,11 @@ const router = createRouter({
           component: () => import('@/views/Accounts.vue'),
         },
         {
+          path: 'dreamina',
+          name: 'dreamina',
+          component: () => import('@/views/DreaminaAccounts.vue'),
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/Settings.vue'),

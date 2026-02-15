@@ -1,4 +1,5 @@
 import json, time, os, asyncio, uuid, ssl, re, yaml, base64
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Union, Dict, Any
 from pathlib import Path
@@ -80,8 +81,19 @@ from core import storage, account
 # 模型到配额类型的映射
 MODEL_TO_QUOTA_TYPE = {
     "gemini-imagen": "images",
-    "gemini-veo": "videos"
+    "gemini-veo": "videos",
 }
+
+# Dreamina 模型列表（不走 Gemini 账户流程）
+# 从 dreamina_service 的 IMAGE_MODEL_MAP 动态导入所有支持的模型
+try:
+    from core.dreamina_service import IMAGE_MODEL_MAP as _DREAMINA_MODEL_MAP
+    DREAMINA_MODELS = set(_DREAMINA_MODEL_MAP.keys())
+    # 所有 Dreamina 模型都归类为 images 配额类型
+    for _dm in DREAMINA_MODELS:
+        MODEL_TO_QUOTA_TYPE[_dm] = "images"
+except ImportError:
+    DREAMINA_MODELS = set()
 
 # ---------- 日志配置 ----------
 
@@ -392,6 +404,9 @@ VIRTUAL_MODELS = {
     "gemini-imagen": {"imageGenerationSpec": {}},
     "gemini-veo": {"videoGenerationSpec": {}},
 }
+# 注册所有 Dreamina 模型为虚拟模型
+for _dm in DREAMINA_MODELS:
+    VIRTUAL_MODELS[_dm] = {}
 
 def get_tools_spec(model_name: str) -> dict:
     """根据模型名称返回工具配置"""
@@ -551,6 +566,24 @@ except Exception as e:
     register_service = None
     login_service = None
 
+# ---------- Dreamina 注册服务 ----------
+dreamina_register_service = None
+try:
+    from core.dreamina_register_service import DreaminaRegisterService
+    dreamina_register_service = DreaminaRegisterService()
+except Exception as e:
+    logger.warning("[SYSTEM] Dreamina 注册服务不可用: %s", e)
+    dreamina_register_service = None
+
+# ---------- Dreamina 图片生成服务 ----------
+dreamina_service = None
+try:
+    from core.dreamina_service import DreaminaService
+    dreamina_service = DreaminaService(proxy=PROXY_FOR_CHAT or "")
+except Exception as e:
+    logger.warning("[SYSTEM] Dreamina 图片生成服务不可用: %s", e)
+    dreamina_service = None
+
 # 验证必需的环境变量
 if not ADMIN_KEY:
     logger.error("[SYSTEM] 未配置 ADMIN_KEY 环境变量，请设置后重启")
@@ -609,8 +642,85 @@ def process_media(data: bytes, mime: str, chat_id: str, file_id: str, base_url: 
     else:
         return process_image(data, mime, chat_id, file_id, base_url, idx, request_id, account_id)
 
+@asynccontextmanager
+async def lifespan(app):
+    """应用生命周期：启动时初始化后台任务，关闭时保存状态"""
+    global global_stats
+
+    # ---- startup ----
+    global_stats = await load_stats()
+    global_stats.setdefault("request_timestamps", [])
+    global_stats.setdefault("model_request_timestamps", {})
+    global_stats.setdefault("failure_timestamps", [])
+    global_stats.setdefault("rate_limit_timestamps", [])
+    global_stats.setdefault("recent_conversations", [])
+    global_stats.setdefault("success_count", 0)
+    global_stats.setdefault("failed_count", 0)
+    global_stats.setdefault("account_conversations", {})
+    global_stats.setdefault("account_failures", {})
+    uptime_tracker.configure_storage(os.path.join(DATA_DIR, "uptime.json"))
+    uptime_tracker.load_heartbeats()
+    for account_id, account_mgr in multi_account_mgr.accounts.items():
+        account_mgr.conversation_count = global_stats["account_conversations"].get(account_id, 0)
+        account_mgr.failure_count = global_stats["account_failures"].get(account_id, 0)
+    logger.info("[SYSTEM] 已恢复账户成功/失败统计")
+    logger.info(f"[SYSTEM] 统计数据已加载: {global_stats['total_requests']} 次请求, {global_stats['total_visitors']} 位访客")
+
+    asyncio.create_task(multi_account_mgr.start_background_cleanup())
+    logger.info("[SYSTEM] 后台缓存清理任务已启动（间隔: 5分钟）")
+
+    asyncio.create_task(cleanup_database_task())
+    logger.info("[SYSTEM] 数据库清理任务已启动（每天清理一次，保留30天数据）")
+
+    if os.environ.get("ACCOUNTS_CONFIG"):
+        logger.info("[SYSTEM] 自动刷新账号已跳过（使用 ACCOUNTS_CONFIG）")
+    elif storage.is_database_enabled() and AUTO_REFRESH_ACCOUNTS_SECONDS > 0:
+        asyncio.create_task(auto_refresh_accounts_task())
+        logger.info(f"[SYSTEM] 自动刷新账号任务已启动（间隔: {AUTO_REFRESH_ACCOUNTS_SECONDS}秒）")
+    elif storage.is_database_enabled():
+        logger.info("[SYSTEM] 自动刷新账号功能已禁用（配置为0）")
+
+    if login_service:
+        try:
+            asyncio.create_task(login_service.start_polling())
+            logger.info("[SYSTEM] 账户刷新轮询服务已启动（默认禁用，可在设置中启用）")
+        except Exception as e:
+            logger.error(f"[SYSTEM] 启动登录服务失败: {e}")
+    else:
+        logger.info("[SYSTEM] 自动登录刷新未启用或依赖不可用")
+
+    # 初始化 Dreamina 图片生成服务
+    if dreamina_service:
+        try:
+            await dreamina_service.initialize()
+            logger.info(f"[SYSTEM] Dreamina 图片生成服务已启动，可用账户: {dreamina_service.available_count}")
+        except Exception as e:
+            logger.error(f"[SYSTEM] Dreamina 服务初始化失败: {e}")
+
+    if storage.is_database_enabled():
+        asyncio.create_task(save_cooldown_states_task())
+        logger.info("[SYSTEM] 冷却状态定期保存任务已启动（间隔: 5分钟）")
+
+    yield
+
+    # ---- shutdown ----
+    if dreamina_service:
+        try:
+            await dreamina_service.close()
+            logger.info("[SYSTEM] Dreamina 服务已关闭")
+        except Exception as e:
+            logger.error(f"[SYSTEM] 关闭 Dreamina 服务失败: {e}")
+
+    if storage.is_database_enabled():
+        try:
+            success_count = await account.save_all_cooldown_states(multi_account_mgr)
+            logger.info(f"[SYSTEM] 应用关闭，已保存 {success_count}/{len(multi_account_mgr.accounts)} 个账户的冷却状态")
+        except Exception as e:
+            logger.error(f"[SYSTEM] 关闭时保存冷却状态失败: {e}")
+
+
 # ---------- OpenAI 兼容接口 ----------
-app = FastAPI(title="Gemini-Business OpenAI Gateway")
+app = FastAPI(title="Gemini-Business OpenAI Gateway", lifespan=lifespan)
 
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "").strip()
 allow_all_origins = os.getenv("ALLOW_ALL_ORIGINS", "0") == "1"
@@ -631,7 +741,8 @@ elif frontend_origin:
         allow_headers=["*"],
     )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 if os.path.exists(os.path.join("static", "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join("static", "assets")), name="assets")
 if os.path.exists(os.path.join("static", "vendor")):
@@ -765,73 +876,6 @@ async def auto_refresh_accounts_task():
             logger.error(f"[AUTO-REFRESH] 自动刷新任务异常: {type(e).__name__}: {str(e)[:100]}")
             await asyncio.sleep(60)  # 出错后等待60秒再重试
 
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化后台任务"""
-    global global_stats
-
-    # 加载统计数据
-    global_stats = await load_stats()
-    global_stats.setdefault("request_timestamps", [])
-    global_stats.setdefault("model_request_timestamps", {})
-    global_stats.setdefault("failure_timestamps", [])
-    global_stats.setdefault("rate_limit_timestamps", [])
-    global_stats.setdefault("recent_conversations", [])
-    global_stats.setdefault("success_count", 0)
-    global_stats.setdefault("failed_count", 0)
-    global_stats.setdefault("account_conversations", {})
-    global_stats.setdefault("account_failures", {})
-    uptime_tracker.configure_storage(os.path.join(DATA_DIR, "uptime.json"))
-    uptime_tracker.load_heartbeats()
-    for account_id, account_mgr in multi_account_mgr.accounts.items():
-        account_mgr.conversation_count = global_stats["account_conversations"].get(account_id, 0)
-        account_mgr.failure_count = global_stats["account_failures"].get(account_id, 0)
-    logger.info("[SYSTEM] 已恢复账户成功/失败统计")
-    logger.info(f"[SYSTEM] 统计数据已加载: {global_stats['total_requests']} 次请求, {global_stats['total_visitors']} 位访客")
-
-    # 启动缓存清理任务
-    asyncio.create_task(multi_account_mgr.start_background_cleanup())
-    logger.info("[SYSTEM] 后台缓存清理任务已启动（间隔: 5分钟）")
-
-    # 启动数据库清理任务
-    asyncio.create_task(cleanup_database_task())
-    logger.info("[SYSTEM] 数据库清理任务已启动（每天清理一次，保留30天数据）")
-
-    # 启动自动刷新账号任务（仅数据库模式有效）
-    if os.environ.get("ACCOUNTS_CONFIG"):
-        logger.info("[SYSTEM] 自动刷新账号已跳过（使用 ACCOUNTS_CONFIG）")
-    elif storage.is_database_enabled() and AUTO_REFRESH_ACCOUNTS_SECONDS > 0:
-        asyncio.create_task(auto_refresh_accounts_task())
-        logger.info(f"[SYSTEM] 自动刷新账号任务已启动（间隔: {AUTO_REFRESH_ACCOUNTS_SECONDS}秒）")
-    elif storage.is_database_enabled():
-        logger.info("[SYSTEM] 自动刷新账号功能已禁用（配置为0）")
-
-    # 启动自动登录刷新轮询（始终启动，但默认禁用）
-    if login_service:
-        try:
-            asyncio.create_task(login_service.start_polling())
-            logger.info("[SYSTEM] 账户刷新轮询服务已启动（默认禁用，可在设置中启用）")
-        except Exception as e:
-            logger.error(f"[SYSTEM] 启动登录服务失败: {e}")
-    else:
-        logger.info("[SYSTEM] 自动登录刷新未启用或依赖不可用")
-
-    # 启动冷却状态定期保存任务（每5分钟保存一次）
-    if storage.is_database_enabled():
-        asyncio.create_task(save_cooldown_states_task())
-        logger.info("[SYSTEM] 冷却状态定期保存任务已启动（间隔: 5分钟）")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时保存冷却状态"""
-    if storage.is_database_enabled():
-        try:
-            success_count = await account.save_all_cooldown_states(multi_account_mgr)
-            logger.info(f"[SYSTEM] 应用关闭，已保存 {success_count}/{len(multi_account_mgr.accounts)} 个账户的冷却状态")
-        except Exception as e:
-            logger.error(f"[SYSTEM] 关闭时保存冷却状态失败: {e}")
 
 
 async def save_cooldown_states_task():
@@ -1321,6 +1365,97 @@ async def admin_check_login_refresh(request: Request):
         return {"status": "idle"}
     return task.to_dict()
 
+# ---------- Dreamina 注册管理 API ----------
+
+@app.post("/admin/dreamina/register/start")
+@require_login()
+async def admin_dreamina_start_register(request: Request, count: Optional[int] = Body(default=None), domain: Optional[str] = Body(default=None), mail_provider: Optional[str] = Body(default=None)):
+    if not dreamina_register_service:
+        raise HTTPException(503, "dreamina register service unavailable")
+    task = await dreamina_register_service.start_register(count=count, domain=domain, mail_provider=mail_provider)
+    return task.to_dict()
+
+@app.post("/admin/dreamina/register/cancel/{task_id}")
+@require_login()
+async def admin_dreamina_cancel_register(request: Request, task_id: str, payload: dict = Body(default=None)):
+    if not dreamina_register_service:
+        raise HTTPException(503, "dreamina register service unavailable")
+    payload = payload or {}
+    reason = payload.get("reason") or "cancelled"
+    task = await dreamina_register_service.cancel_task(task_id, reason=reason)
+    if not task:
+        raise HTTPException(404, "task not found")
+    return task.to_dict()
+
+@app.get("/admin/dreamina/register/task/{task_id}")
+@require_login()
+async def admin_dreamina_get_register_task(request: Request, task_id: str):
+    if not dreamina_register_service:
+        raise HTTPException(503, "dreamina register service unavailable")
+    task = dreamina_register_service.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    return task.to_dict()
+
+@app.get("/admin/dreamina/register/current")
+@require_login()
+async def admin_dreamina_get_current_register(request: Request):
+    if not dreamina_register_service:
+        raise HTTPException(503, "dreamina register service unavailable")
+    task = dreamina_register_service.get_current_task()
+    if not task:
+        return {"status": "idle"}
+    return task.to_dict()
+
+# ---------- Dreamina 账号管理 API ----------
+
+@app.get("/admin/dreamina/accounts")
+@require_login()
+async def admin_dreamina_list_accounts(request: Request):
+    from core.storage import load_dreamina_accounts_sync
+    accounts = await asyncio.to_thread(load_dreamina_accounts_sync)
+    if accounts is None:
+        return []
+    return accounts
+
+@app.delete("/admin/dreamina/accounts/{account_id}")
+@require_login()
+async def admin_dreamina_delete_account(request: Request, account_id: str):
+    from core.storage import delete_dreamina_accounts_sync
+    deleted = await asyncio.to_thread(delete_dreamina_accounts_sync, [account_id])
+    if deleted == 0:
+        raise HTTPException(404, "account not found")
+    return {"status": "success", "deleted": deleted}
+
+@app.put("/admin/dreamina/accounts/{account_id}/disable")
+@require_login()
+async def admin_dreamina_disable_account(request: Request, account_id: str):
+    from core.storage import update_dreamina_account_status_sync
+    ok = await asyncio.to_thread(update_dreamina_account_status_sync, account_id, "disabled")
+    if not ok:
+        raise HTTPException(404, "account not found")
+    return {"status": "success"}
+
+@app.put("/admin/dreamina/accounts/{account_id}/enable")
+@require_login()
+async def admin_dreamina_enable_account(request: Request, account_id: str):
+    from core.storage import update_dreamina_account_status_sync
+    ok = await asyncio.to_thread(update_dreamina_account_status_sync, account_id, "active")
+    if not ok:
+        raise HTTPException(404, "account not found")
+    return {"status": "success"}
+
+@app.post("/admin/dreamina/accounts/bulk-delete")
+@require_login()
+async def admin_dreamina_bulk_delete(request: Request, account_ids: List[str] = Body(...)):
+    if not account_ids:
+        raise HTTPException(400, "账户ID列表不能为空")
+    if len(account_ids) > 50:
+        raise HTTPException(400, f"单次最多删除50个账户，当前请求 {len(account_ids)} 个")
+    from core.storage import delete_dreamina_accounts_sync
+    deleted = await asyncio.to_thread(delete_dreamina_accounts_sync, account_ids)
+    return {"status": "success", "deleted": deleted}
+
 @app.delete("/admin/accounts/{account_id}")
 @require_login()
 async def admin_delete_account(request: Request, account_id: str):
@@ -1466,6 +1601,7 @@ async def admin_get_settings(request: Request):
             "refresh_window_hours": config.basic.refresh_window_hours,
             "register_default_count": config.basic.register_default_count,
             "register_domain": config.basic.register_domain,
+            "dreamina_register_default_count": config.basic.dreamina_register_default_count,
         },
         "image_generation": {
             "enabled": config.image_generation.enabled,
@@ -1528,6 +1664,7 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
         basic.setdefault("refresh_window_hours", config.basic.refresh_window_hours)
         basic.setdefault("register_default_count", config.basic.register_default_count)
         basic.setdefault("register_domain", config.basic.register_domain)
+        basic.setdefault("dreamina_register_default_count", config.basic.dreamina_register_default_count)
         if not isinstance(basic.get("register_domain"), str):
             basic["register_domain"] = ""
         basic.pop("duckmail_proxy", None)
@@ -1797,6 +1934,10 @@ async def list_models(authorization: str = Header(None)):
         data.append({"id": m, "object": "model", "created": now, "owned_by": "google", "permission": []})
     data.append({"id": "gemini-imagen", "object": "model", "created": now, "owned_by": "google", "permission": []})
     data.append({"id": "gemini-veo", "object": "model", "created": now, "owned_by": "google", "permission": []})
+    # Dreamina 图片生成模型
+    if dreamina_service and dreamina_service.available_count > 0:
+        for dm in sorted(DREAMINA_MODELS):
+            data.append({"id": dm, "object": "model", "created": now, "owned_by": "bytedance", "permission": []})
     return {"object": "list", "data": data}
 
 @app.get("/v1/models/{model_id}")
@@ -1815,6 +1956,111 @@ async def chat(
     verify_api_key(API_KEY, authorization)
     # ... (保留原有的chat逻辑)
     return await chat_impl(req, request, authorization)
+
+
+async def _handle_dreamina_request(
+    req: ChatRequest,
+    request: Request,
+    request_id: str,
+    start_ts: float,
+    finalize_result,
+):
+    """处理 Dreamina 图片生成请求，返回 OpenAI 格式响应"""
+    if not dreamina_service:
+        await finalize_result("error", 503, "Dreamina 服务未初始化")
+        raise HTTPException(503, "Dreamina 图片生成服务未初始化")
+
+    if dreamina_service.available_count == 0:
+        # 尝试重新加载账户
+        await dreamina_service.reload_accounts()
+        if dreamina_service.available_count == 0:
+            await finalize_result("error", 503, "无可用 Dreamina 账户")
+            raise HTTPException(503, "无可用 Dreamina 账户")
+
+    # 从 messages 中提取 prompt（取最后一条 user 消息）
+    prompt = ""
+    for msg in reversed(req.messages):
+        if msg.role == "user":
+            if isinstance(msg.content, str):
+                prompt = msg.content
+            elif isinstance(msg.content, list):
+                # 多模态消息，提取文本部分
+                for part in msg.content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        prompt = part.get("text", "")
+                        break
+            break
+
+    if not prompt:
+        await finalize_result("error", 400, "缺少图片生成 prompt")
+        raise HTTPException(400, "请提供图片生成的 prompt")
+
+    logger.info(f"[DREAMINA] [req_{request_id}] 收到 Dreamina 图片生成请求: model={req.model}, prompt={prompt[:80]}")
+
+    try:
+        result = await dreamina_service.generate_image(
+            prompt=prompt,
+            model=req.model,
+            size="2048x2048",
+            request_id=request_id,
+        )
+
+        images = result.get("images", [])
+        if not images:
+            await finalize_result("error", 502, "Dreamina 未返回图片")
+            raise HTTPException(502, "Dreamina 生成成功但未返回图片")
+
+        # 构造 markdown 图片内容
+        content_parts = []
+        for idx, img in enumerate(images, 1):
+            url = img.get("url", "")
+            if url:
+                content_parts.append(f"![生成的图片{idx}]({url})")
+        content = "\n\n".join(content_parts)
+
+        duration_s = time.time() - start_ts
+        logger.info(f"[DREAMINA] [req_{request_id}] 生成完成: {len(images)} 张图片, 耗时 {duration_s:.1f}s")
+
+        await finalize_result("success", 200)
+
+        # 返回 OpenAI ChatCompletion 格式
+        if req.stream:
+            # 流式响应
+            created = int(time.time())
+            chat_id = f"chatcmpl-dreamina-{request_id}"
+
+            async def stream_generator():
+                # role chunk
+                yield f"data: {create_chunk(chat_id, created, req.model, {'role': 'assistant'}, None)}\n\n"
+                # content chunk
+                yield f"data: {create_chunk(chat_id, created, req.model, {'content': content}, None)}\n\n"
+                # finish chunk
+                yield f"data: {create_chunk(chat_id, created, req.model, {}, 'stop')}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        else:
+            # 非流式响应
+            return {
+                "id": f"chatcmpl-dreamina-{request_id}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": req.model,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": len(prompt), "completion_tokens": len(content), "total_tokens": len(prompt) + len(content)}
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DREAMINA] [req_{request_id}] 失败: {type(e).__name__}: {e}")
+        await finalize_result("error", 502, str(e)[:100])
+        raise HTTPException(502, f"Dreamina 生成失败: {e}")
+
 
 # chat实现函数
 async def chat_impl(
@@ -1971,6 +2217,10 @@ async def chat_impl(
 
     # 保存模型信息到 request.state（用于 Uptime 追踪）
     request.state.model = req.model
+
+    # ====== Dreamina 专用路径 ======
+    if req.model in DREAMINA_MODELS:
+        return await _handle_dreamina_request(req, request, request_id, start_ts, finalize_result)
 
     required_quota_types = get_required_quota_types(req.model)
 
@@ -2298,6 +2548,29 @@ async def generate_images(
     )
 
     logger.info(f"[IMAGE-GEN] [req_{request_id}] 收到图片生成请求: model={req.model}, prompt={req.prompt[:100]}")
+
+    # Dreamina 图片生成直接走 DreaminaService
+    if req.model in DREAMINA_MODELS:
+        if not dreamina_service or dreamina_service.available_count == 0:
+            raise HTTPException(503, "无可用 Dreamina 账户")
+
+        try:
+            result = await dreamina_service.generate_image(
+                prompt=req.prompt,
+                model=req.model,
+                size=req.size or "2048x2048",
+                request_id=request_id,
+            )
+            images = result.get("images", [])
+            created_time = int(time.time())
+            data_list = [{"url": img["url"], "revised_prompt": req.prompt} for img in images if img.get("url")]
+            logger.info(f"[IMAGE-GEN] [req_{request_id}] Dreamina 图片生成完成: {len(data_list)}张")
+            return {"created": created_time, "data": data_list}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[IMAGE-GEN] [req_{request_id}] Dreamina 图片生成失败: {type(e).__name__}: {str(e)}")
+            raise HTTPException(502, f"Dreamina 生成失败: {e}")
 
     try:
         # 调用 chat_impl 获取响应

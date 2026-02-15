@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="docs/logo.svg" width="120" alt="Gemini Business2API logo" />
+  <img src="docs/logo.svg" width="120" alt="NexusAPI logo" />
 </p>
-<h1 align="center">Gemini Business2API</h1>
+<h1 align="center">NexusAPI</h1>
 <p align="center">赋予硅基生物以灵魂</p>
 <p align="center">当时明月在 · 曾照彩云归</p>
 <p align="center">
@@ -9,7 +9,7 @@
 </p>
 <p align="center"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" /> <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" /> <img src="https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white" /> <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" /> <img src="https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white" /> <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" /></p>
 
-<p align="center">将 Gemini Business 转换为 OpenAI 兼容接口，支持多账号负载均衡、图像生成、视频生成、多模态能力与内置管理面板。</p>
+<p align="center">将多个 AI 服务（Gemini Business、Dreamina、Kiro 等）转换为 OpenAI 兼容接口，支持多账号自动注册、负载均衡、图像生成、视频生成、多模态能力与内置管理面板。</p>
 
 ---
 
@@ -47,7 +47,7 @@
 - ✅ 日志与监控 - 实时状态与统计信息
 - ✅ 代理支持 - 通过设置面板配置
 - ✅ 内置管理面板 - 在线配置与账号管理
-- ✅ 可选 PostgreSQL 后端 - 支持账户/设置/统计持久化 [感谢PR](https://github.com/Dreamy-rain/gemini-business2api/pull/4)
+- ✅ 可选 PostgreSQL 后端 - 支持账户/设置/统计持久化 [感谢PR](https://github.com/starsvictor/NexusAPI/pull/4)
 
 ## 🤖 模型功能
 
@@ -93,7 +93,7 @@ python scripts/migrate_to_database.py
 
 ### 方式一：Zeabur 部署（推荐，支持自动更新）
 
-大佬对Linux和Docker的部署优化 [感谢PR](https://github.com/Dreamy-rain/gemini-business2api/pull/37)
+大佬对Linux和Docker的部署优化 [感谢PR](https://github.com/starsvictor/NexusAPI/pull/37)
 
 #### 第一步：Fork 仓库
 
@@ -140,8 +140,8 @@ python scripts/migrate_to_database.py
 
 **Linux/macOS (WSL):**
 ```bash
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 bash setup.sh
 
 # 编辑 .env 设置 ADMIN_KEY
@@ -157,8 +157,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 **Windows:**
 ```cmd
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 setup.bat
 
 # 编辑 .env 设置 ADMIN_KEY
@@ -188,8 +188,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/Scripts/python.exe
 ### 方式三：手动部署
 
 ```bash
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 
 # 安装 uv（必需）
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -226,8 +226,8 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Dreamy-rain/gemini-business2api.git
-cd gemini-business2api
+git clone https://github.com/starsvictor/NexusAPI.git
+cd NexusAPI
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -312,6 +312,6 @@ docker-compose pull && docker-compose up -d
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Dreamy-rain/gemini-business2api&type=date&legend=top-left)](https://www.star-history.com/#Dreamy-rain/gemini-business2api&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=starsvictor/NexusAPI&type=date&legend=top-left)](https://www.star-history.com/#starsvictor/NexusAPI&type=date&legend=top-left)
 
 **如果这个项目对你有帮助，请给个 ⭐ Star!**

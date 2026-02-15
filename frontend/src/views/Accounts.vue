@@ -560,7 +560,7 @@
               </svg>
               严禁滥用：禁止将本工具用于商业用途或任何形式的滥用（无论规模大小）
             </p>
-            <p class="mt-1 text-muted-foreground">详细声明请查看项目 <a href="https://github.com/Dreamy-rain/gemini-business2api/blob/main/docs/DISCLAIMER.md" target="_blank" class="text-primary hover:underline font-medium">DISCLAIMER.md</a></p>
+            <p class="mt-1 text-muted-foreground">详细声明请查看项目 <a href="https://github.com/starsvictor/NexusAPI/blob/main/docs/DISCLAIMER.md" target="_blank" class="text-primary hover:underline font-medium">DISCLAIMER.md</a></p>
           </div>
           </div>
         </div>

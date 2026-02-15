@@ -3,7 +3,7 @@
     <div class="flex min-h-screen items-center justify-center">
       <div class="w-full max-w-md rounded-[2.5rem] border border-border bg-card p-10 shadow-2xl shadow-black/10">
         <div class="text-center">
-          <h1 class="text-3xl font-semibold text-foreground">Gemini Business 2API</h1>
+          <h1 class="text-3xl font-semibold text-foreground">NexusAPI</h1>
           <p class="mt-2 text-sm text-muted-foreground">管理员登录</p>
         </div>
 
@@ -41,7 +41,7 @@
 
         <div class="mt-8 flex items-center justify-center gap-4 text-xs text-muted-foreground">
           <a
-            href="https://github.com/Dreamy-rain/gemini-business2api"
+            href="https://github.com/starsvictor/NexusAPI"
             target="_blank"
             rel="noopener noreferrer"
             class="inline-flex items-center gap-2 transition-colors hover:text-foreground"

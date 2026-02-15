@@ -1016,7 +1016,7 @@ async def save_account_cooldown_state(account_id: str, account_mgr: AccountManag
             "failure_count": account_mgr.failure_count,
         }
 
-        success = await storage.update_account_cooldown(account_id, cooldown_data)
+        success = await asyncio.to_thread(storage.update_account_cooldown_sync, account_id, cooldown_data)
         if success:
             logger.debug(f"[COOLDOWN] 账户 {account_id} 冷却状态已保存")
         else:
@@ -1062,7 +1062,7 @@ async def save_all_cooldown_states(multi_account_mgr: MultiAccountManager) -> in
         logger.info(f"[COOLDOWN] 无需保存：所有账户无冷却状态")
         return 0
 
-    success_count, missing = await storage.bulk_update_accounts_cooldown(updates)
+    success_count, missing = await asyncio.to_thread(storage.bulk_update_accounts_cooldown_sync, updates)
 
     if missing:
         logger.warning(f"[COOLDOWN] {len(missing)} 个账户不存在: {missing[:5]}")

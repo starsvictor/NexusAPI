@@ -3,12 +3,12 @@ FROM node:20-slim AS frontend-builder
 WORKDIR /app/frontend
 
 # 先复制 package 文件利用 Docker 缓存
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm install --silent
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 
 # 复制前端源码并构建
 COPY frontend/ ./
-RUN npm run build
+RUN pnpm run build
 
 # Stage 2: 最终运行时镜像
 FROM python:3.11-slim

@@ -23,7 +23,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _db_pool = None
-_db_pool_lock = None
+_db_pool_creating = threading.Lock()
 _db_loop = None
 _db_thread = None
 _db_loop_lock = threading.Lock()
@@ -185,13 +185,14 @@ def _get_sqlite_conn():
 
 
 async def _get_pool():
-    """Get (or create) the asyncpg connection pool."""
-    global _db_pool, _db_pool_lock
+    """Get (or create) the asyncpg connection pool.
+
+    连接池始终在 _db_loop 上创建，保证所有 asyncpg 操作在同一事件循环。
+    """
+    global _db_pool
     if _db_pool is not None:
         return _db_pool
-    if _db_pool_lock is None:
-        _db_pool_lock = asyncio.Lock()
-    async with _db_pool_lock:
+    with _db_pool_creating:
         if _db_pool is not None:
             return _db_pool
         db_url = _get_database_url()
@@ -266,6 +267,19 @@ async def _init_tables(pool) -> None:
             """
             CREATE INDEX IF NOT EXISTS task_history_created_at_idx
             ON task_history(created_at DESC)
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dreamina_accounts (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                password TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
             """
         )
         logger.info("[STORAGE] Database tables initialized")
@@ -352,6 +366,19 @@ def _init_sqlite_tables(conn: sqlite3.Connection) -> None:
             """
             CREATE INDEX IF NOT EXISTS request_logs_status_idx
             ON request_logs(status)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dreamina_accounts (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                password TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
             """
         )
 
@@ -1110,3 +1137,175 @@ def load_task_history_sync(limit: int = 100) -> Optional[list]:
 
 def clear_task_history_sync() -> int:
     return _run_in_db_loop(clear_task_history())
+
+
+# ==================== Dreamina accounts storage ====================
+
+async def save_dreamina_account(account: dict) -> bool:
+    """保存 Dreamina 账号（INSERT OR REPLACE）"""
+    if not is_database_enabled():
+        return False
+    account_id = account.get("id")
+    email = account.get("email", "")
+    password = account.get("password", "")
+    session_id = account.get("session_id")
+    status = account.get("status", "active")
+    if not account_id or not email or not password:
+        return False
+    backend = _get_backend()
+    try:
+        if backend == "postgres":
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO dreamina_accounts (id, email, password, session_id, status, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+                    ON CONFLICT (id) DO UPDATE SET
+                        email = EXCLUDED.email,
+                        password = EXCLUDED.password,
+                        session_id = EXCLUDED.session_id,
+                        status = EXCLUDED.status,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    account_id,
+                    email,
+                    password,
+                    session_id,
+                    status,
+                )
+            return True
+        if backend == "sqlite":
+            conn = _get_sqlite_conn()
+            with _sqlite_lock, conn:
+                conn.execute(
+                    """
+                    INSERT INTO dreamina_accounts (id, email, password, session_id, status, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                        email = excluded.email,
+                        password = excluded.password,
+                        session_id = excluded.session_id,
+                        status = excluded.status,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (account_id, email, password, session_id, status),
+                )
+            return True
+    except Exception as e:
+        logger.error(f"[STORAGE] Dreamina account save failed: {e}")
+    return False
+
+
+async def load_dreamina_accounts() -> Optional[list]:
+    """加载所有 Dreamina 账号"""
+    if not is_database_enabled():
+        return None
+    backend = _get_backend()
+    try:
+        if backend == "postgres":
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, email, password, session_id, status, created_at, updated_at "
+                    "FROM dreamina_accounts ORDER BY created_at DESC"
+                )
+            return [dict(row) for row in rows]
+        if backend == "sqlite":
+            conn = _get_sqlite_conn()
+            with _sqlite_lock:
+                rows = conn.execute(
+                    "SELECT id, email, password, session_id, status, created_at, updated_at "
+                    "FROM dreamina_accounts ORDER BY created_at DESC"
+                ).fetchall()
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"[STORAGE] Dreamina accounts load failed: {e}")
+    return None
+
+
+async def update_dreamina_account_status(account_id: str, status: str) -> bool:
+    """更新 Dreamina 账号状态（active/disabled/expired）"""
+    if not is_database_enabled():
+        return False
+    backend = _get_backend()
+    try:
+        if backend == "postgres":
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    UPDATE dreamina_accounts
+                    SET status = $2, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                    """,
+                    account_id,
+                    status,
+                )
+            return result.startswith("UPDATE") and not result.endswith("0")
+        if backend == "sqlite":
+            conn = _get_sqlite_conn()
+            with _sqlite_lock, conn:
+                cur = conn.execute(
+                    """
+                    UPDATE dreamina_accounts
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (status, account_id),
+                )
+            return cur.rowcount > 0
+    except Exception as e:
+        logger.error(f"[STORAGE] Dreamina account status update failed: {e}")
+    return False
+
+
+async def delete_dreamina_accounts(account_ids: list) -> int:
+    """删除指定的 Dreamina 账号"""
+    if not is_database_enabled() or not account_ids:
+        return 0
+    backend = _get_backend()
+    try:
+        if backend == "postgres":
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM dreamina_accounts WHERE id = ANY($1)",
+                    account_ids,
+                )
+            try:
+                return int(result.split()[-1])
+            except Exception:
+                return 0
+        if backend == "sqlite":
+            conn = _get_sqlite_conn()
+            placeholders = ",".join(["?"] * len(account_ids))
+            with _sqlite_lock, conn:
+                cur = conn.execute(
+                    f"DELETE FROM dreamina_accounts WHERE id IN ({placeholders})",
+                    tuple(account_ids),
+                )
+                return cur.rowcount or 0
+    except Exception as e:
+        logger.error(f"[STORAGE] Dreamina accounts delete failed: {e}")
+    return 0
+
+
+def save_dreamina_account_sync(account: dict) -> bool:
+    """sync 包装器：保存 Dreamina 账号"""
+    return _run_in_db_loop(save_dreamina_account(account))
+
+
+def load_dreamina_accounts_sync() -> Optional[list]:
+    """sync 包装器：加载所有 Dreamina 账号"""
+    return _run_in_db_loop(load_dreamina_accounts())
+
+
+def update_dreamina_account_status_sync(account_id: str, status: str) -> bool:
+    """sync 包装器：更新 Dreamina 账号状态"""
+    return _run_in_db_loop(update_dreamina_account_status(account_id, status))
+
+
+def delete_dreamina_accounts_sync(account_ids: list) -> int:
+    """sync 包装器：删除 Dreamina 账号"""
+    return _run_in_db_loop(delete_dreamina_accounts(account_ids))
