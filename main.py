@@ -87,7 +87,7 @@ MODEL_TO_QUOTA_TYPE = {
 # Dreamina 模型列表（不走 Gemini 账户流程）
 # 从 dreamina_service 的 IMAGE_MODEL_MAP 动态导入所有支持的模型
 try:
-    from core.dreamina_service import IMAGE_MODEL_MAP as _DREAMINA_MODEL_MAP
+    from core.dreamina_service import IMAGE_MODEL_MAP as _DREAMINA_MODEL_MAP, _compute_size_from_params
     DREAMINA_MODELS = set(_DREAMINA_MODEL_MAP.keys())
     # 所有 Dreamina 模型都归类为 images 配额类型
     for _dm in DREAMINA_MODELS:
@@ -1995,13 +1995,56 @@ async def _handle_dreamina_request(
         await finalize_result("error", 400, "缺少图片生成 prompt")
         raise HTTPException(400, "请提供图片生成的 prompt")
 
-    logger.info(f"[DREAMINA] [req_{request_id}] 收到 Dreamina 图片生成请求: model={req.model}, prompt={prompt[:80]}")
+    # 从请求原始 body 提取图片生成参数（不影响 ChatRequest 模型）
+    # OpenAI SDK 的 extra_json 会合并到请求体顶层
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # 提取 aspect_ratio 和 resolution（优先顶层字段，其次 generationConfig）
+    aspect_ratio = body.get("aspect_ratio")
+    resolution = body.get("resolution")
+
+    gen_config = body.get("generationConfig", {})
+    image_config = gen_config.get("imageConfig", {}) if isinstance(gen_config, dict) else {}
+    if not aspect_ratio and image_config:
+        aspect_ratio = image_config.get("aspectRatio")
+    if not resolution and image_config:
+        resolution = image_config.get("imageSize")
+
+    # 从 system 消息中解析参数作为兜底
+    # 格式: "aspect_ratio=16:9, resolution=2K"
+    if not aspect_ratio or not resolution:
+        for msg in req.messages:
+            if msg.role == "system" and isinstance(msg.content, str):
+                for seg in msg.content.split(","):
+                    seg = seg.strip()
+                    if "=" in seg:
+                        k, v = seg.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if k == "aspect_ratio" and not aspect_ratio:
+                            aspect_ratio = v
+                        elif k == "resolution" and not resolution:
+                            resolution = v
+                break
+
+    # 根据 aspect_ratio + resolution 计算 size
+    size = _compute_size_from_params(aspect_ratio, resolution)
+    sample_strength = float(body.get("sample_strength", 0.5))
+
+    logger.info(
+        f"[DREAMINA] [req_{request_id}] 收到 Dreamina 图片生成请求: "
+        f"model={req.model}, size={size}, aspect_ratio={aspect_ratio}, "
+        f"resolution={resolution}, prompt={prompt[:80]}"
+    )
 
     try:
         result = await dreamina_service.generate_image(
             prompt=prompt,
             model=req.model,
-            size="2048x2048",
+            size=size,
+            sample_strength=sample_strength,
             request_id=request_id,
         )
 

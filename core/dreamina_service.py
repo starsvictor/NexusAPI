@@ -158,6 +158,73 @@ def _parse_size(size: str) -> tuple:
     return 2048, 2048
 
 
+# aspect_ratio 字符串 → (宽比, 高比) 映射
+_ASPECT_RATIO_MAP = {
+    "1:1": (1, 1),
+    "16:9": (16, 9),
+    "9:16": (9, 16),
+    "4:3": (4, 3),
+    "3:4": (3, 4),
+    "3:2": (3, 2),
+    "2:3": (2, 3),
+}
+
+# resolution 字符串 → 最长边像素
+_RESOLUTION_MAP = {
+    "1k": 1024,
+    "1K": 1024,
+    "2k": 2048,
+    "2K": 2048,
+    "4k": 4096,
+    "4K": 4096,
+}
+
+
+def _compute_size_from_params(
+    aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
+    default_size: str = "2048x2048",
+) -> str:
+    """根据 aspect_ratio 和 resolution 计算 size 字符串。
+
+    - aspect_ratio: 如 "16:9", "1:1", "4:3" 等
+    - resolution: 如 "1K", "2K"
+    - 任何参数缺失时使用 default_size
+    """
+    if not aspect_ratio and not resolution:
+        return default_size
+
+    # 解析最长边
+    max_side = _RESOLUTION_MAP.get(resolution, 2048) if resolution else 2048
+
+    # 解析宽高比
+    ratio = _ASPECT_RATIO_MAP.get(aspect_ratio)
+    if not ratio:
+        # 尝试解析自定义比例 "W:H"
+        if aspect_ratio and ":" in aspect_ratio:
+            try:
+                rw, rh = aspect_ratio.split(":")
+                ratio = (int(rw), int(rh))
+            except (ValueError, ZeroDivisionError):
+                ratio = (1, 1)
+        else:
+            ratio = (1, 1)
+
+    rw, rh = ratio
+    if rw >= rh:
+        width = max_side
+        height = int(max_side * rh / rw)
+    else:
+        height = max_side
+        width = int(max_side * rw / rh)
+
+    # 对齐到 8 像素（图片生成常见要求）
+    width = (width // 8) * 8
+    height = (height // 8) * 8
+
+    return f"{width}x{height}"
+
+
 # ==================== 服务类 ====================
 
 
@@ -425,11 +492,42 @@ class DreaminaService:
     ) -> str:
         """调用 /mweb/v1/aigc_draft/generate 创建图片生成任务"""
         internal_model = IMAGE_MODEL_MAP.get(model, DEFAULT_IMAGE_MODEL)
+        is_external = internal_model.startswith("external_model_")
         width, height = _parse_size(size)
+
+        # 外部模型不支持 2K 分辨率，强制限制到 1K
+        if is_external and (width > 1024 or height > 1024):
+            scale = 1024 / max(width, height)
+            width = int(width * scale)
+            height = int(height * scale)
+
         resolution_type = "2k" if width >= 2048 or height >= 2048 else "1k"
 
         component_id = _uuid()
         submit_id = _uuid()
+
+        # 构建 core_param — 外部模型跳过不兼容参数
+        core_param = {
+            "type": "",
+            "id": _uuid(),
+            "model": internal_model,
+            "prompt": prompt,
+            "negative_prompt": "",
+            "seed": random.randint(100000000, 3500000000),
+            "image_ratio": _get_image_ratio(width, height),
+        }
+
+        if not is_external:
+            # 原生 Dreamina 模型支持的额外参数
+            core_param["sample_strength"] = sample_strength
+            core_param["large_image_info"] = {
+                "type": "",
+                "id": _uuid(),
+                "height": height,
+                "width": width,
+                "resolution_type": resolution_type,
+            }
+            core_param["intelligent_ratio"] = False
 
         draft_content = {
             "type": "draft",
@@ -460,24 +558,7 @@ class DreaminaService:
                         "generate": {
                             "type": "",
                             "id": _uuid(),
-                            "core_param": {
-                                "type": "",
-                                "id": _uuid(),
-                                "model": internal_model,
-                                "prompt": prompt,
-                                "negative_prompt": "",
-                                "seed": random.randint(100000000, 3500000000),
-                                "sample_strength": sample_strength,
-                                "image_ratio": _get_image_ratio(width, height),
-                                "large_image_info": {
-                                    "type": "",
-                                    "id": _uuid(),
-                                    "height": height,
-                                    "width": width,
-                                    "resolution_type": resolution_type,
-                                },
-                                "intelligent_ratio": False,
-                            },
+                            "core_param": core_param,
                         },
                         "gen_option": {
                             "type": "",
