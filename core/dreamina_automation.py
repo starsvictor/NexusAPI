@@ -140,22 +140,21 @@ class DreaminaAutomation:
         page = ChromiumPage(options)
         page.set.timeouts(self.timeout)
 
-        # 反检测
-        if self.headless:
-            try:
-                page.run_cdp("Page.addScriptToEvaluateOnNewDocument", source="""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                    window.chrome = {runtime: {}};
-                    Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 1});
-                    Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
-                    Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'});
-                    Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-                    Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-                """)
-            except Exception:
-                pass
+        # 反检测（两种模式都启用）
+        try:
+            page.run_cdp("Page.addScriptToEvaluateOnNewDocument", source="""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                window.chrome = {runtime: {}};
+                Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 1});
+                Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
+                Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+            """)
+        except Exception:
+            pass
 
         return page
 
@@ -201,20 +200,45 @@ class DreaminaAutomation:
             self._save_screenshot(page, "dreamina_code_timeout")
             return {"success": False, "error": "验证码获取超时"}
 
-        self._log("info", f"[Dreamina] 收到验证码: {code}")
+        self._log("info", f"[Dreamina] 收到验证码: {code} (长度 {len(code)})")
         self._fill_verification_code(page, code)
 
-        # 填完后尝试点击确认按钮
-        time.sleep(2)
+        # 填完后等待页面处理，再尝试点击确认按钮
+        time.sleep(3)
+        # 截图记录验证码填写后的状态
+        self._save_screenshot(page, "dreamina_after_code_fill")
         self._click_confirm_button(page)
 
         # Step 8: 处理生日页面（如果出现）
         time.sleep(4)
         self._handle_birthday_page(page)
 
-        # Step 9: 等待 sessionid cookie
+        # Step 9: 确保页面跳转到主站（触发 session cookie 写入）
+        time.sleep(3)
+        current_url = page.url or ""
+        self._log("info", f"[Dreamina] 当前页面: {current_url[:80]}")
+        # 如果还在登录/注册页面，手动导航到主站
+        if "login" in current_url or "signup" in current_url or "passport" in current_url:
+            self._log("info", "[Dreamina] 页面未跳转，手动导航到主站...")
+            try:
+                page.get(DREAMINA_URL, timeout=self.timeout)
+                time.sleep(5)
+            except Exception as e:
+                self._log("warning", f"[Dreamina] 导航失败: {e}")
+
+        # Step 10: 等待 sessionid cookie（增加等待时间）
         self._log("info", "[Dreamina] 等待 Session...")
-        session_id = self._wait_for_session(page)
+        session_id = self._wait_for_session(page, timeout=60)
+        if not session_id:
+            # 最后一次尝试：刷新页面后再检查
+            self._log("info", "[Dreamina] 首次未获取到 session，刷新页面重试...")
+            try:
+                page.get(DREAMINA_URL, timeout=self.timeout)
+                time.sleep(5)
+                session_id = self._wait_for_session(page, timeout=20)
+            except Exception:
+                pass
+
         if not session_id:
             self._save_screenshot(page, "dreamina_session_not_found")
             return {"success": False, "error": "未获取到 sessionid"}
@@ -299,41 +323,99 @@ class DreaminaAutomation:
             pass
 
     def _fill_verification_code(self, page, code: str) -> None:
-        """填入验证码（支持分割输入框）"""
-        # 策略 A: 查找多个分割输入框
+        """填入验证码（支持分割输入框和 iframe 内表单）"""
+        time.sleep(1)  # 等待验证码输入框完全渲染
+        self._log("info", f"[Dreamina] 开始填写验证码，当前URL: {(page.url or '')[:80]}")
+
+        # 优先策略: 直接用键盘输入（验证码页面第一个输入框已自动聚焦）
+        # 分割输入框会在输入后自动将焦点跳转到下一个框
+        self._log("info", "[Dreamina] 策略1: 直接键盘输入验证码...")
         try:
-            inputs = page.eles("tag:input")
-            visible_inputs = [inp for inp in inputs if inp.states.is_displayed and inp.attr("type") != "hidden"]
+            for char in code:
+                page.actions.type(char)
+                time.sleep(0.15)
+            time.sleep(0.5)
+            self._log("info", "[Dreamina] 键盘输入完成")
+            return
+        except Exception as e:
+            self._log("warning", f"[Dreamina] 键盘输入失败: {e}")
 
-            # 过滤掉搜索框等
-            code_inputs = []
-            for inp in visible_inputs:
-                placeholder = (inp.attr("placeholder") or "").lower()
-                if "search" not in placeholder and "email" not in placeholder:
-                    code_inputs.append(inp)
+        # 策略2: 检查 iframe 并在其中查找输入框
+        self._log("info", "[Dreamina] 策略2: 检查 iframe...")
+        try:
+            iframes = page.eles("tag:iframe", timeout=3)
+            self._log("info", f"[Dreamina] 检测到 {len(iframes)} 个 iframe")
+            for iframe in iframes:
+                src = iframe.attr("src") or ""
+                self._log("info", f"[Dreamina] iframe src: {src[:100]}")
+                if any(kw in src.lower() for kw in ("passport", "verify", "account", "auth", "login", "signup")):
+                    self._log("info", f"[Dreamina] 切换到 passport iframe")
+                    try:
+                        frame = page.get_frame(iframe)
+                        self._fill_code_in_context(frame, code)
+                        return
+                    except Exception as e:
+                        self._log("warning", f"[Dreamina] iframe 内操作失败: {e}")
+        except Exception as e:
+            self._log("warning", f"[Dreamina] iframe 检测失败: {e}")
 
-            if 4 <= len(code_inputs) <= 6:
-                self._log("info", f"[Dreamina] 识别到 {len(code_inputs)} 个分割输入框")
+        # 策略3: 在主页面查找输入框
+        self._log("info", "[Dreamina] 策略3: 在主页面查找输入框...")
+        try:
+            self._fill_code_in_context(page, code)
+        except Exception as e:
+            self._log("warning", f"[Dreamina] 主页面输入失败: {e}")
+
+    def _fill_code_in_context(self, context, code: str) -> None:
+        """在指定上下文（主页面或 iframe）中填写验证码"""
+        # 方法 A: 查找 maxlength=1 的分割输入框
+        try:
+            inputs = context.eles("css:input[maxlength='1']", timeout=3)
+            visible_inputs = [inp for inp in inputs if inp.states.is_displayed]
+            self._log("info", f"[Dreamina] 找到 {len(visible_inputs)} 个 maxlength=1 输入框")
+            if len(visible_inputs) >= len(code):
                 for i, char in enumerate(code):
-                    if i < len(code_inputs):
-                        code_inputs[i].input(char)
+                    if i < len(visible_inputs):
+                        visible_inputs[i].input(char)
                         time.sleep(0.1)
                 return
         except Exception:
             pass
 
-        # 策略 B: 聚焦第一个输入框，逐字符键入
-        self._log("info", "[Dreamina] 使用键盘模拟输入验证码...")
+        # 方法 B: 过滤非验证码输入后匹配
         try:
-            first_input = page.ele("tag:input", timeout=3)
-            if first_input:
-                first_input.click()
+            inputs = context.eles("tag:input", timeout=3)
+            code_inputs = []
+            for inp in inputs:
+                if not inp.states.is_displayed:
+                    continue
+                input_type = (inp.attr("type") or "").lower()
+                if input_type in ("password", "email", "search", "hidden"):
+                    continue
+                placeholder = (inp.attr("placeholder") or "").lower()
+                if "search" in placeholder or "email" in placeholder or "password" in placeholder:
+                    continue
+                code_inputs.append(inp)
+
+            self._log("info", f"[Dreamina] 过滤后有 {len(code_inputs)} 个候选输入框")
+            if len(code_inputs) >= len(code):
+                for i, char in enumerate(code):
+                    if i < len(code_inputs):
+                        code_inputs[i].input(char)
+                        time.sleep(0.1)
+                return
+            elif code_inputs:
+                # 输入框不够但存在，聚焦第一个后键盘输入
+                code_inputs[0].click()
                 time.sleep(0.3)
                 for char in code:
-                    page.actions.type(char)
-                    time.sleep(0.1)
-        except Exception as e:
-            self._log("warning", f"[Dreamina] 验证码输入失败: {e}")
+                    context.actions.type(char)
+                    time.sleep(0.15)
+                return
+        except Exception:
+            pass
+
+        self._log("warning", "[Dreamina] 在当前上下文中未找到验证码输入框")
 
     def _click_confirm_button(self, page) -> None:
         """点击 Next / Sign up / Confirm 按钮"""
@@ -432,16 +514,46 @@ class DreaminaAutomation:
         except Exception as e:
             self._log("warning", f"[Dreamina] 生日填写异常: {e}")
 
-    def _wait_for_session(self, page, timeout: int = 30) -> Optional[str]:
+    def _wait_for_session(self, page, timeout: int = 60) -> Optional[str]:
         """等待 sessionid cookie 出现"""
-        for _ in range(timeout // 2):
+        # 按优先级排序：优先取 sessionid
+        session_cookie_priority = ["sessionid", "sessionid_ss", "sid_tt"]
+        for i in range(timeout // 2):
+            # 通过 CDP 获取所有 cookie（包括 httpOnly 和跨域）
             try:
-                cookies = page.cookies()
-                for cookie in cookies:
-                    if cookie.get("name") == "sessionid" and cookie.get("value"):
-                        return cookie["value"]
+                cdp_result = page.run_cdp("Network.getAllCookies")
+                all_cookies = cdp_result.get("cookies", [])
+                if i == 0:
+                    all_names = [c.get("name") for c in all_cookies]
+                    self._log("info", f"[Dreamina] 当前所有 cookie 名称: {all_names}")
+                # 构建 cookie 字典，按优先级查找
+                cookie_map = {}
+                for cookie in all_cookies:
+                    name = cookie.get("name", "")
+                    value = cookie.get("value", "")
+                    if name in session_cookie_priority and value and len(value) > 10:
+                        cookie_map[name] = value
+                for preferred_name in session_cookie_priority:
+                    if preferred_name in cookie_map:
+                        self._log("info", f"[Dreamina] 通过 CDP 获取到 {preferred_name} (第 {i+1} 次检查)")
+                        return cookie_map[preferred_name]
             except Exception:
-                pass
+                # CDP 失败时降级到 DrissionPage 原生 API
+                try:
+                    cookies = page.cookies()
+                    cookie_map = {}
+                    for cookie in cookies:
+                        name = cookie.get("name", "")
+                        value = cookie.get("value", "")
+                        if name in session_cookie_priority and value and len(value) > 10:
+                            cookie_map[name] = value
+                    for preferred_name in session_cookie_priority:
+                        if preferred_name in cookie_map:
+                            self._log("info", f"[Dreamina] 获取到 {preferred_name} cookie (第 {i+1} 次检查)")
+                            return cookie_map[preferred_name]
+                except Exception:
+                    pass
+
             time.sleep(2)
         return None
 
@@ -468,13 +580,23 @@ class DreaminaAutomation:
                 return False
 
     def _save_screenshot(self, page, name: str) -> None:
-        """保存截图"""
+        """保存截图（自动清理超过 20 张的旧截图）"""
         try:
             from core.storage import _data_file_path
             screenshot_dir = _data_file_path("automation")
             os.makedirs(screenshot_dir, exist_ok=True)
             path = os.path.join(screenshot_dir, f"{name}_{int(time.time())}.png")
             page.get_screenshot(path=path)
+            # 清理旧截图，保留最新 20 张
+            try:
+                files = sorted(
+                    [f for f in os.listdir(screenshot_dir) if f.endswith(".png")],
+                    key=lambda f: os.path.getmtime(os.path.join(screenshot_dir, f)),
+                )
+                for old_file in files[:-20]:
+                    os.remove(os.path.join(screenshot_dir, old_file))
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -502,5 +624,5 @@ class DreaminaAutomation:
     @staticmethod
     def _get_ua() -> str:
         """生成随机 User-Agent"""
-        v = random.choice(["120.0.0.0", "121.0.0.0", "122.0.0.0"])
+        v = random.choice(["124.0.0.0", "125.0.0.0", "126.0.0.0", "127.0.0.0", "128.0.0.0"])
         return f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Safari/537.36"
