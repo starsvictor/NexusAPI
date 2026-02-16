@@ -22,6 +22,15 @@ from core.database import stats_db
 DATA_DIR = "./data"
 logger_prefix = "[LOCAL]"
 
+# ---------- 代理环境变量大小写同步 ----------
+# Python 部分库只检查小写 no_proxy，不检查大写 NO_PROXY
+# 确保大写和小写都存在，避免代理绕过失效
+for _upper, _lower in [("NO_PROXY", "no_proxy"), ("HTTP_PROXY", "http_proxy"), ("HTTPS_PROXY", "https_proxy")]:
+    if _upper in os.environ and _lower not in os.environ:
+        os.environ[_lower] = os.environ[_upper]
+    elif _lower in os.environ and _upper not in os.environ:
+        os.environ[_upper] = os.environ[_lower]
+
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
 
