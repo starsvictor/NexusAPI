@@ -15,8 +15,7 @@ from core.base_task_service import TaskCancelledError
 
 
 # 常量
-AUTH_HOME_URL = "https://auth.business.gemini.google/"
-DEFAULT_XSRF_TOKEN = "KdLRzKwwBTD5wo8nUollAbY6cW0"
+AUTH_HOME_URL = "https://business.gemini.google/"
 
 # Linux 下常见的 Chromium 路径
 CHROMIUM_PATHS = [
@@ -181,37 +180,45 @@ class GeminiAutomation:
         from datetime import datetime
         task_start_time = datetime.now()
 
-        # Step 1: 导航到首页并设置 Cookie
+        # Step 1: 导航到首页
         self._log("info", f"🌐 打开登录页面: {email}")
-
         page.get(AUTH_HOME_URL, timeout=self.timeout)
-        time.sleep(2)
+        time.sleep(3)
 
-        # 设置两个关键 Cookie
+        # Step 2: 检查当前页面状态
+        current_url = page.url
+        self._log("info", f"📍 当前 URL: {current_url}")
+
+        # 已登录
+        if "csesidx=" in current_url and "/cid/" in current_url:
+            self._log("info", "✅ 已登录，提取配置")
+            return self._extract_config(page, email)
+
+        # Step 2.5: 构造 loginHint URL 跳转到验证码页面
+        xsrf_token = ""
         try:
-            self._log("info", "🍪 设置认证 Cookies...")
-            page.set.cookies({
-                "name": "__Host-AP_SignInXsrf",
-                "value": DEFAULT_XSRF_TOKEN,
-                "url": AUTH_HOME_URL,
-                "path": "/",
-                "secure": True,
-            })
-            # 添加 reCAPTCHA Cookie
-            page.set.cookies({
-                "name": "_GRECAPTCHA",
-                "value": "09ABCL...",
-                "url": "https://google.com",
-                "path": "/",
-                "secure": True,
-            })
-        except Exception as e:
-            self._log("warning", f"⚠️ Cookie 设置失败: {e}")
-
+            cookies = page.cookies()
+            for c in cookies:
+                if c.get("name") == "__Host-AP_SignInXsrf":
+                    xsrf_token = c.get("value", "")
+                    break
+        except Exception:
+            pass
         login_hint = quote(email, safe="")
-        login_url = f"https://auth.business.gemini.google/login/email?continueUrl=https%3A%2F%2Fbusiness.gemini.google%2F&loginHint={login_hint}&xsrfToken={DEFAULT_XSRF_TOKEN}"
+        login_url = f"https://auth.business.gemini.google/login/email?continueUrl=https%3A%2F%2Fbusiness.gemini.google%2F&loginHint={login_hint}"
+        if xsrf_token:
+            login_url += f"&xsrfToken={quote(xsrf_token, safe='')}"
+        self._log("info", "🔗 跳转到验证码页面")
+        page.get(login_url, timeout=self.timeout)
+        time.sleep(5)
 
-        # 提前启动网络监听，捕获默认发送
+        current_url = page.url
+        self._log("info", f"📍 当前 URL: {current_url}")
+        if "csesidx=" in current_url and "/cid/" in current_url:
+            self._log("info", "✅ 已登录，提取配置")
+            return self._extract_config(page, email)
+
+        # 启动网络监听
         try:
             page.listen.start(
                 targets=["batchexecute", "browserinfo", "verify-oob-code"],
@@ -221,18 +228,6 @@ class GeminiAutomation:
             )
         except Exception:
             pass
-
-        page.get(login_url, timeout=self.timeout)
-        time.sleep(5)
-
-        # Step 2: 检查当前页面状态
-        current_url = page.url
-        self._log("info", f"📍 当前 URL: {current_url}")
-        has_business_params = "business.gemini.google" in current_url and "csesidx=" in current_url and "/cid/" in current_url
-
-        if has_business_params:
-            self._log("info", "✅ 已登录，提取配置")
-            return self._extract_config(page, email)
 
         # Step 3: 点击发送验证码按钮（最多5次，每次间隔10秒）
         self._log("info", "📧 发送验证码...")
@@ -256,17 +251,16 @@ class GeminiAutomation:
             self._save_screenshot(page, "code_input_missing")
             return {"success": False, "error": "code input not found"}
 
-        # Step 5: 轮询邮件获取验证码（3次，每次5秒间隔）
+        # Step 5: 轮询邮件获取验证码
         self._log("info", "📬 等待邮箱验证码...")
-        code = mail_client.poll_for_code(timeout=15, interval=5, since_time=task_start_time)
+        code = mail_client.poll_for_code(timeout=30, interval=5, since_time=task_start_time)
 
         if not code:
-            self._log("warning", "⚠️ 验证码超时，15秒后重新发送...")
-            time.sleep(15)
+            self._log("warning", "⚠️ 验证码超时，点击重新发送...")
             # 尝试点击重新发送按钮
             if self._click_resend_code_button(page):
-                # 再次轮询验证码（3次，每次5秒间隔）
-                code = mail_client.poll_for_code(timeout=15, interval=5, since_time=task_start_time)
+                # 重新发送后再轮询 20 秒
+                code = mail_client.poll_for_code(timeout=20, interval=5, since_time=task_start_time)
                 if not code:
                     self._log("error", "❌ 重新发送后仍未收到验证码")
                     self._save_screenshot(page, "code_timeout_after_resend")
@@ -279,21 +273,11 @@ class GeminiAutomation:
         self._log("info", f"✅ 收到验证码: {code}")
 
         # Step 6: 输入验证码并提交
-        code_input = page.ele("css:input[jsname='ovqh0b']", timeout=3) or \
-                     page.ele("css:input[type='tel']", timeout=2)
-
-        if not code_input:
-            self._log("error", "❌ 验证码输入框已失效")
-            return {"success": False, "error": "code input expired"}
-
-        # 尝试模拟人类输入，失败则降级到直接注入
         self._log("info", "⌨️ 输入验证码...")
-        if not self._simulate_human_input(code_input, code):
-            self._log("warning", "⚠️ 模拟输入失败，降级为直接输入")
-            code_input.input(code, clear=True)
-            time.sleep(0.5)
+        self._simulate_human_input(code_input, code)
+        time.sleep(1)
 
-        # 直接使用回车提交，不再查找按钮
+        # 提交验证码
         self._log("info", "⏎ 提交验证码")
         code_input.input("\n")
 
@@ -396,19 +380,18 @@ class GeminiAutomation:
         except Exception as e:
             self._log("warning", f"⚠️ 搜索按钮异常: {e}")
 
-        # 检查是否已经在验证码输入页面
+        # 检查是否已经在验证码输入页面（通过 loginHint URL 跳转后常见）
         code_input = page.ele("css:input[jsname='ovqh0b']", timeout=2) or page.ele("css:input[name='pinInput']", timeout=1)
         if code_input:
             self._stop_listen(page)
             self._log("info", "✅ 已在验证码输入页面")
 
-            # 直接点击重新发送按钮（不管之前是否发送过）
+            # 点击重新发送按钮触发验证码发送
             if self._click_resend_code_button(page):
                 self._log("info", "✅ 已点击重新发送按钮")
-                return True
             else:
-                self._log("warning", "⚠️ 未找到重新发送按钮，继续流程")
-                return True
+                self._log("warning", "⚠️ 未找到重新发送按钮，继续等待")
+            return True
 
         self._stop_listen(page)
         self._log("error", "❌ 未找到发送验证码按钮")
@@ -607,9 +590,10 @@ class GeminiAutomation:
             element.click()
             time.sleep(random.uniform(0.1, 0.3))
 
-            # 逐字符输入
+            # 使用 actions.type() 逐字符键入，避免 element.input() 每次清空的问题
+            page = element.owner
             for char in text:
-                element.input(char)
+                page.actions.type(char)
                 # 随机延迟：模拟人类打字速度（50-150ms/字符）
                 time.sleep(random.uniform(0.05, 0.15))
 
@@ -618,18 +602,6 @@ class GeminiAutomation:
             return True
         except Exception:
             return False
-
-    def _find_verify_button(self, page):
-        """查找验证按钮（排除重新发送按钮）"""
-        try:
-            buttons = page.eles("tag:button")
-            for btn in buttons:
-                text = (btn.text or "").strip().lower()
-                if text and "重新" not in text and "发送" not in text and "resend" not in text and "send" not in text:
-                    return btn
-        except Exception:
-            pass
-        return None
 
     def _click_resend_code_button(self, page) -> bool:
         """点击重新发送验证码按钮"""
