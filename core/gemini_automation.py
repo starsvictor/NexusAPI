@@ -91,6 +91,22 @@ class GeminiAutomation:
 
     def _create_page(self) -> ChromiumPage:
         """创建浏览器页面"""
+
+        # 确保 CDP 通信(localhost)不走代理，防止 DrissionPage ↔ Chrome 连接被截断
+        # HTTP_PROXY/HTTPS_PROXY 保留不动，Chrome 自身会读取用于网络请求
+        for key in ("no_proxy", "NO_PROXY"):
+            existing = os.environ.get(key, "")
+            entries = [e.strip() for e in existing.split(",") if e.strip()]
+            for host in ("localhost", "127.0.0.1"):
+                if host not in entries:
+                    entries.append(host)
+            os.environ[key] = ",".join(entries)
+
+        # 如果未显式指定代理，自动从环境变量获取
+        proxy = self.proxy
+        if not proxy:
+            proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or ""
+
         options = ChromiumOptions()
 
         # 自动检测 Chromium 浏览器路径（Linux/Docker 环境）
@@ -110,8 +126,8 @@ class GeminiAutomation:
         options.set_argument("--lang=zh-CN")
         options.set_pref("intl.accept_languages", "zh-CN,zh")
 
-        if self.proxy:
-            options.set_argument(f"--proxy-server={self.proxy}")
+        if proxy:
+            options.set_argument(f"--proxy-server={proxy}")
 
         if self.headless:
             # 使用新版无头模式，更接近真实浏览器
